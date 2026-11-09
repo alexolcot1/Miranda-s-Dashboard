@@ -16,6 +16,7 @@ import {
 import { AppData, Product } from '../types/inventory';
 import { parseImportData, INITIAL_DEFAULT_PRODUCTS } from '../utils/parser';
 import { exportBackup, exportCSV, money } from '../utils/storage';
+import { generateInventoryPDF, generateSalesPDF } from '../utils/pdfExport';
 
 interface RestoreBackupModalProps {
   isOpen: boolean;
@@ -411,16 +412,18 @@ export const RestoreBackupModal: React.FC<RestoreBackupModalProps> = ({
                   </div>
                   <div className="mt-3 flex flex-col gap-1.5 text-xs">
                     <button
-                      onClick={() => exportCSV('inventory', appData)}
-                      className="w-full py-2 px-2.5 rounded-lg bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-left cursor-pointer transition-colors"
+                      onClick={() => generateInventoryPDF(appData)}
+                      className="w-full py-2 px-2.5 rounded-lg bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-left cursor-pointer transition-colors flex items-center justify-between shadow-2xs"
                     >
-                      Exportar inventario (.csv)
+                      <span>Descargar informe de inventario (.pdf)</span>
+                      <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded uppercase font-bold">PDF</span>
                     </button>
                     <button
-                      onClick={() => exportCSV('sales', appData)}
-                      className="w-full py-2 px-2.5 rounded-lg bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-left cursor-pointer transition-colors"
+                      onClick={() => generateSalesPDF(appData)}
+                      className="w-full py-2 px-2.5 rounded-lg bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-left cursor-pointer transition-colors flex items-center justify-between shadow-2xs"
                     >
-                      Exportar ventas (.csv)
+                      <span>Descargar informe de ventas (.pdf)</span>
+                      <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded uppercase font-bold">PDF</span>
                     </button>
                   </div>
                 </div>

@@ -1,5 +1,7 @@
 export interface Product {
   id: string;
+  sku?: string; // Código identificador personalizado / SKU
+  code?: string;
   name: string;
   category: string;
   size: string;

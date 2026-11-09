@@ -26,6 +26,7 @@ export const LiveModeModal: React.FC<LiveModeModalProps> = ({
 
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
+    (p.sku && p.sku.toLowerCase().includes(search.toLowerCase())) ||
     (p.rackLocation && p.rackLocation.toLowerCase().includes(search.toLowerCase())) ||
     (p.category && p.category.toLowerCase().includes(search.toLowerCase()))
   );
@@ -123,11 +124,16 @@ export const LiveModeModal: React.FC<LiveModeModalProps> = ({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    {item.rackLocation && (
-                      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-pink-500/20 text-pink-300 border border-pink-500/30 mb-1">
-                        📍 {item.rackLocation}
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/10 text-pink-200 border border-white/10">
+                        {item.sku || item.id.slice(-6).toUpperCase()}
                       </span>
-                    )}
+                      {item.rackLocation && (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                          📍 {item.rackLocation}
+                        </span>
+                      )}
+                    </div>
                     <h4 className="font-extrabold text-base sm:text-lg text-white leading-tight">
                       {item.name}
                     </h4>

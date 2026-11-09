@@ -109,6 +109,11 @@ export function subscribeToStoreData(
   onError?: (err: any) => void,
   onEmpty?: () => void
 ): Unsubscribe {
+  // If not signed in yet, do not trigger a rejected Firestore query
+  if (!auth.currentUser) {
+    return () => {};
+  }
+
   const sharedRef = doc(db, 'stores', SHARED_STORE_ID, 'data', SHARED_DOC_ID);
 
   return onSnapshot(
@@ -129,11 +134,17 @@ export function subscribeToStoreData(
       }
     },
     (error) => {
+      // If user signed out while listener was shutting down, avoid throwing permission error
+      if (!auth.currentUser) {
+        if (onError) onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.GET, `stores/${SHARED_STORE_ID}/data/${SHARED_DOC_ID}`);
       if (onError) onError(error);
     }
   );
 }
+
 
 export async function pushStoreDataToCloud(userId: string, data: AppData): Promise<void> {
   const path = `stores/${SHARED_STORE_ID}/data/${SHARED_DOC_ID}`;

@@ -28,11 +28,17 @@ import {
   exportBackup, 
   exportCSV 
 } from './utils/storage';
+import { 
+  generateInventoryPDF, 
+  generateSalesPDF, 
+  generatePurchasesPDF, 
+  generateExpensesPDF, 
+  generateTasksAndNotesPDF 
+} from './utils/pdfExport';
 import { LiveModeModal } from './components/LiveModeModal';
 import { RestoreBackupModal } from './components/RestoreBackupModal';
 import { 
   Radio, 
-  RefreshCw, 
   Plus, 
   Trash2, 
   Edit3, 
@@ -51,7 +57,9 @@ import {
   Cloud,
   CheckCircle,
   LogIn,
-  LogOut as LogOutIcon
+  LogOut as LogOutIcon,
+  FileText,
+  Calculator
 } from 'lucide-react';
 import { 
   auth, 
@@ -99,15 +107,23 @@ export default function App() {
 
   // Product Form State (Add / Edit)
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [prodSku, setProdSku] = useState('');
   const [prodName, setProdName] = useState('');
   const [prodCategory, setProdCategory] = useState('Ropa');
   const [prodSize, setProdSize] = useState('');
   const [prodColor, setProdColor] = useState('');
-  const [prodPrice, setProdPrice] = useState('29.99');
-  const [prodCost, setProdCost] = useState('12.00');
+  const [prodPrice, setProdPrice] = useState('');
+  const [prodCost, setProdCost] = useState('');
   const [prodStock, setProdStock] = useState('10');
   const [prodChannel, setProdChannel] = useState('TikTok & WhatsApp');
   const [prodRack, setProdRack] = useState('');
+
+  // Calculadora de IVA State
+  const [calcVatRate, setCalcVatRate] = useState<string>('21');
+  const [calcPriceNoVat, setCalcPriceNoVat] = useState<string>('');
+  const [calcPriceWithVat, setCalcPriceWithVat] = useState<string>('');
+  const [calcVatAmount, setCalcVatAmount] = useState<string>('');
+  const [calcLastEdited, setCalcLastEdited] = useState<'noVat' | 'withVat' | 'vatAmount' | null>('noVat');
 
   // Cart & Sales State
   const [saleCart, setSaleCart] = useState<CartItem[]>([]);
@@ -158,11 +174,19 @@ export default function App() {
 
   // Firebase Auth Listener & Realtime Firestore sync (Shared store across collaborators)
   useEffect(() => {
+    let unsubscribeSnapshot: (() => void) | null = null;
+
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      // Clean up previous snapshot listener on user change or logout
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = null;
+      }
+
       setCurrentUser(user);
       if (user) {
         setSyncStatus('syncing');
-        const unsubscribeSnapshot = subscribeToStoreData(
+        unsubscribeSnapshot = subscribeToStoreData(
           user.uid,
           (remoteData) => {
             isRemoteUpdateRef.current = true;
@@ -185,14 +209,18 @@ export default function App() {
             }
           }
         );
-        return () => unsubscribeSnapshot();
       } else {
         setSyncStatus('local');
         setIsInitialCloudLoad(false);
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+      }
+      unsubscribeAuth();
+    };
   }, []);
 
   // Sync to local storage & Cloud on state changes
@@ -275,11 +303,13 @@ export default function App() {
   const handleProductSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const name = prodName.trim();
-    const price = Number(prodPrice);
-    const cost = prodCost === '' ? 0 : Number(prodCost);
+    const parsedPrice = parseFloat(String(prodPrice).replace(',', '.'));
+    const price = isNaN(parsedPrice) ? 0 : parsedPrice;
+    const parsedCost = parseFloat(String(prodCost).replace(',', '.'));
+    const cost = isNaN(parsedCost) ? 0 : parsedCost;
     const stock = Number(prodStock);
 
-    if (!name || !Number.isFinite(price) || price <= 0 || !Number.isFinite(cost) || cost < 0 || !Number.isInteger(stock) || stock < 0) {
+    if (!name || !Number.isFinite(price) || price < 0 || !Number.isFinite(cost) || cost < 0 || !Number.isInteger(stock) || stock < 0) {
       showToast('Revisa nombre, precio, coste y stock.');
       return;
     }
@@ -290,8 +320,11 @@ export default function App() {
         ...prev,
         products: prev.products.map(p => {
           if (p.id === editingProductId) {
+            const updatedSku = prodSku.trim() || p.sku || p.id.slice(-6).toUpperCase();
             return {
               ...p,
+              sku: updatedSku,
+              code: updatedSku,
               name,
               category: prodCategory,
               size: prodSize.trim(),
@@ -310,8 +343,11 @@ export default function App() {
       showToast('Variante actualizada');
     } else {
       // Add
+      const newSku = prodSku.trim() || 'MCP-' + Math.floor(1000 + Math.random() * 9000);
       const newP: Product = {
         id: uid('p'),
+        sku: newSku,
+        code: newSku,
         name,
         category: prodCategory,
         size: prodSize.trim(),
@@ -330,23 +366,25 @@ export default function App() {
     }
 
     // Reset Form
+    setProdSku('');
     setProdName('');
     setProdSize('');
     setProdColor('');
-    setProdPrice('29.99');
-    setProdCost('12.00');
+    setProdPrice('');
+    setProdCost('');
     setProdStock('10');
     setProdRack('');
   };
 
   const handleEditProduct = (p: Product) => {
     setEditingProductId(p.id);
+    setProdSku(p.sku || p.code || p.id.slice(-6).toUpperCase());
     setProdName(p.name);
     setProdCategory(p.category || 'Ropa');
     setProdSize(p.size || '');
     setProdColor(p.color || '');
-    setProdPrice(String(p.price));
-    setProdCost(String(p.unitCost || 0));
+    setProdPrice(p.price ? String(p.price) : '');
+    setProdCost(p.unitCost ? String(p.unitCost) : '');
     setProdStock(String(p.stock));
     setProdChannel(p.channel || 'TikTok & WhatsApp');
     setProdRack(p.rackLocation || '');
@@ -356,13 +394,53 @@ export default function App() {
 
   const handleCancelEdit = () => {
     setEditingProductId(null);
+    setProdSku('');
     setProdName('');
     setProdSize('');
     setProdColor('');
-    setProdPrice('29.99');
-    setProdCost('12.00');
+    setProdPrice('');
+    setProdCost('');
     setProdStock('10');
     setProdRack('');
+  };
+
+  // Calculadora de IVA Handlers
+  const handleCalculateVat = (fromField?: 'noVat' | 'withVat' | 'vatAmount') => {
+    const rate = Number(calcVatRate) || 21;
+    const factor = rate / 100;
+    const trigger = fromField || calcLastEdited || 'noVat';
+
+    if (trigger === 'noVat') {
+      const base = parseFloat(String(calcPriceNoVat).replace(',', '.'));
+      if (!isNaN(base) && base >= 0) {
+        const vat = base * factor;
+        const total = base + vat;
+        setCalcVatAmount(vat.toFixed(2));
+        setCalcPriceWithVat(total.toFixed(2));
+      }
+    } else if (trigger === 'withVat') {
+      const total = parseFloat(String(calcPriceWithVat).replace(',', '.'));
+      if (!isNaN(total) && total >= 0) {
+        const base = total / (1 + factor);
+        const vat = total - base;
+        setCalcPriceNoVat(base.toFixed(2));
+        setCalcVatAmount(vat.toFixed(2));
+      }
+    } else if (trigger === 'vatAmount') {
+      const vat = parseFloat(String(calcVatAmount).replace(',', '.'));
+      if (!isNaN(vat) && vat >= 0 && factor > 0) {
+        const base = vat / factor;
+        const total = base + vat;
+        setCalcPriceNoVat(base.toFixed(2));
+        setCalcPriceWithVat(total.toFixed(2));
+      }
+    }
+  };
+
+  const handleClearCalc = () => {
+    setCalcPriceNoVat('');
+    setCalcPriceWithVat('');
+    setCalcVatAmount('');
   };
 
   const handleDeleteProduct = (id: string) => {
@@ -897,15 +975,6 @@ export default function App() {
               <span className="hidden sm:inline">Modo</span> TikTok Live
             </button>
 
-            <button
-              onClick={() => setIsRestoreOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white text-[#70419a] hover:bg-[#f5effa] text-xs font-bold border border-[#eadff0] transition-all cursor-pointer"
-              title="Restaurar datos o código de Gemini"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Restaurar</span>
-            </button>
-
             {/* Cloud Sync Status & Google Account */}
             {currentUser ? (
               <div className="flex items-center gap-1.5 sm:gap-2">
@@ -1213,23 +1282,62 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               {/* Product Form */}
               <div className="lg:col-span-7 card-boutique">
-                <h3 className="text-base font-bold text-[#48245f] mb-4">
-                  {editingProductId ? 'Editar variante' : 'Añadir variante de producto'}
-                </h3>
-                <form onSubmit={handleProductSubmit} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-bold text-[#64546e] mb-1">Nombre del producto *</label>
-                    <input
-                      type="text"
-                      value={prodName}
-                      onChange={e => setProdName(e.target.value)}
-                      required
-                      placeholder="Ej. Blusa satinada"
-                      className="w-full p-2.5 rounded-xl border border-[#eadff0] focus:border-[#70419a] focus:ring-1 focus:ring-[#70419a] outline-none bg-white text-xs"
-                    />
+                <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#eadff0]">
+                  <h3 className="text-base font-bold text-[#48245f] m-0">
+                    {editingProductId ? 'Editar variante' : 'Añadir variante de producto'}
+                  </h3>
+                  {editingProductId && (
+                    <span className="text-[11px] font-bold text-[#c34b63] bg-[#fff0f2] px-2 py-0.5 rounded-md">
+                      Modificando variante
+                    </span>
+                  )}
+                </div>
+
+                <form onSubmit={handleProductSubmit} className="space-y-3.5 text-xs">
+                  {/* Fila 1: Código + Nombre del producto + Stock inicial */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+                    <div className="w-full sm:w-28 shrink-0">
+                      <label className="block font-bold text-[#64546e] mb-1">Código</label>
+                      <input
+                        type="text"
+                        maxLength={7}
+                        value={prodSku}
+                        onChange={e => setProdSku(e.target.value.toUpperCase().slice(0, 7))}
+                        placeholder="Ej. 102A01"
+                        className="w-full p-2.5 rounded-xl border border-[#eadff0] focus:border-[#70419a] focus:ring-1 focus:ring-[#70419a] outline-none bg-white text-xs font-mono font-bold tracking-wider text-center"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block font-bold text-[#64546e] mb-1">Nombre del producto *</label>
+                      <input
+                        type="text"
+                        value={prodName}
+                        onChange={e => setProdName(e.target.value)}
+                        required
+                        placeholder="Ej. Blusa satinada Curvy Plus"
+                        className="w-full p-2.5 rounded-xl border border-[#eadff0] focus:border-[#70419a] focus:ring-1 focus:ring-[#70419a] outline-none bg-white text-xs"
+                      />
+                    </div>
+                    <div className="w-full sm:w-28 shrink-0">
+                      <label className="block font-bold text-[#64546e] mb-1">Stock *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="999"
+                        required
+                        value={prodStock}
+                        onChange={e => {
+                          const val = e.target.value.slice(0, 3);
+                          setProdStock(val);
+                        }}
+                        placeholder="0"
+                        className="w-full p-2.5 rounded-xl border border-[#eadff0] focus:border-[#70419a] focus:ring-1 focus:ring-[#70419a] outline-none bg-white text-xs font-bold text-center"
+                      />
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Fila 2: Categoría + Talla/Medida + Color */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block font-bold text-[#64546e] mb-1">Categoría</label>
                       <select
@@ -1253,7 +1361,7 @@ export default function App() {
                         type="text"
                         value={prodSize}
                         onChange={e => setProdSize(e.target.value)}
-                        placeholder="Ej. S, M, 38 o Única"
+                        placeholder="Ej. 44, XL, Única"
                         className="w-full p-2.5 rounded-xl border border-[#eadff0] outline-none bg-white text-xs"
                       />
                     </div>
@@ -1264,53 +1372,51 @@ export default function App() {
                         type="text"
                         value={prodColor}
                         onChange={e => setProdColor(e.target.value)}
-                        placeholder="Ej. Negro"
+                        placeholder="Ej. Buganvilla, Negro"
                         className="w-full p-2.5 rounded-xl border border-[#eadff0] outline-none bg-white text-xs"
                       />
                     </div>
+                  </div>
 
+                  {/* Fila 3: Coste total por unidad (€) + Precio de venta agregado (Coste + 21% IVA) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block font-bold text-[#64546e] mb-1">Precio de venta final (€) *</label>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        required
-                        value={prodPrice}
-                        onChange={e => setProdPrice(e.target.value)}
-                        placeholder="29,99"
-                        className="w-full p-2.5 rounded-xl border border-[#eadff0] outline-none bg-white text-xs font-bold"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-[#64546e] mb-1">Coste total por unidad (€)</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-bold text-[#64546e]">Coste total por unidad (€)</label>
+                        <span className="text-[10px] text-[#83768a]">Base s/IVA</span>
+                      </div>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={prodCost}
                         onChange={e => setProdCost(e.target.value)}
-                        placeholder="12,00"
-                        className="w-full p-2.5 rounded-xl border border-[#eadff0] outline-none bg-white text-xs"
+                        placeholder="0,00"
+                        className="w-full p-2.5 rounded-xl border border-[#eadff0] focus:border-[#70419a] outline-none bg-white text-xs font-mono font-medium"
                       />
-                      <small className="text-[10px] text-[#83768a]">Incluye IVA/recargo de compra.</small>
+                      <small className="text-[10px] text-[#83768a]">Coste unitario orientativo.</small>
                     </div>
 
                     <div>
-                      <label className="block font-bold text-[#64546e] mb-1">Stock inicial *</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-bold text-[#48245f]">Precio de Venta Final *</label>
+                      </div>
                       <input
                         type="number"
                         min="0"
-                        step="1"
+                        step="0.01"
                         required
-                        value={prodStock}
-                        onChange={e => setProdStock(e.target.value)}
-                        placeholder="10"
-                        className="w-full p-2.5 rounded-xl border border-[#eadff0] outline-none bg-white text-xs font-bold"
+                        value={prodPrice}
+                        onChange={e => setProdPrice(e.target.value)}
+                        placeholder="0,00"
+                        className="w-full p-2.5 rounded-xl border border-[#eadff0] focus:border-[#70419a] outline-none bg-white text-xs font-bold text-[#48245f]"
                       />
+                      <small className="text-[10px] text-[#83768a]">Se reflejará en las variantes registradas.</small>
                     </div>
+                  </div>
 
+                  {/* Fila 4: Canal de Venta + Ubicación / Perchero */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block font-bold text-[#64546e] mb-1">Canal de Venta</label>
                       <select
@@ -1357,32 +1463,136 @@ export default function App() {
                 </form>
               </div>
 
-              {/* Summary of inventory */}
+              {/* Calculadora de IVA (Sustituye al resumen aquí) */}
               <div className="lg:col-span-5 card-boutique flex flex-col justify-between">
                 <div>
-                  <h3 className="text-base font-bold text-[#48245f] mb-4">Resumen del inventario</h3>
-                  <div className="divide-y divide-[#f0eaf4] text-xs">
-                    <div className="py-2.5 flex items-center justify-between">
-                      <span className="text-[#83768a]">Variantes registradas</span>
-                      <strong className="text-[#48245f] text-sm">{data.products.length}</strong>
+                  {/* Encabezado como en la imagen */}
+                  <div className="pb-3 border-b border-[#eadff0] mb-3">
+                    <h3 className="text-xl font-black text-gray-900 tracking-tight flex items-center gap-2">
+                      <Calculator className="w-5 h-5 text-[#70419a]" />
+                      Calcular IVA
+                    </h3>
+                    <div className="flex items-center gap-1.5 mt-1 text-sm font-bold text-gray-800">
+                      <span>España</span>
+                      <span className="font-normal text-gray-600">: tipo general:</span>
+                      <span className="inline-block bg-[#97cba4] text-[#0d3b1e] border border-[#78b387] px-2 py-0.5 rounded text-xs font-black tracking-wider shadow-inner">
+                        21 %
+                      </span>
                     </div>
-                    <div className="py-2.5 flex items-center justify-between">
-                      <span className="text-[#83768a]">Unidades disponibles</span>
-                      <strong className="text-[#48245f] text-sm">{allUnits}</strong>
+                  </div>
+
+                  {/* Fila de acción "Rellena los campos que quieras y → [Calcular]" */}
+                  <div className="flex items-center justify-between gap-2 mb-3 bg-[#fdfbfd] p-2 rounded-xl border border-[#eadff0]">
+                    <span className="text-xs text-gray-700 font-medium">
+                      Rellena los campos que quieras y →
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCalculateVat()}
+                      className="px-3.5 py-1.5 bg-[#e2e2e6] hover:bg-[#d5d5da] active:bg-[#c8c8ce] border border-[#a6a6ad] rounded-md font-bold text-gray-900 text-xs shadow-sm cursor-pointer transition-colors"
+                    >
+                      Calcular
+                    </button>
+                  </div>
+
+                  {/* Inputs según formato de la imagen */}
+                  <div className="space-y-2 text-xs">
+                    <div className="grid grid-cols-12 items-center gap-2">
+                      <label className="col-span-5 text-xs font-bold text-gray-800">IVA %:</label>
+                      <div className="col-span-6">
+                        <input
+                          type="number"
+                          value={calcVatRate}
+                          onChange={e => setCalcVatRate(e.target.value)}
+                          className="w-full p-1.5 text-right font-mono font-bold text-xs border border-gray-400 rounded bg-white focus:outline-none focus:border-[#70419a]"
+                        />
+                      </div>
+                      <span className="col-span-1 text-xs font-bold text-gray-600">%</span>
                     </div>
-                    <div className="py-2.5 flex items-center justify-between">
-                      <span className="text-[#83768a]">Valor a precio de venta</span>
-                      <strong className="text-[#48245f] text-sm">{money(stockTotalValue)}</strong>
+
+                    <div className="grid grid-cols-12 items-center gap-2">
+                      <label className="col-span-5 text-xs font-bold text-gray-800">Precio sin IVA:</label>
+                      <div className="col-span-6">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={calcPriceNoVat}
+                          onChange={e => {
+                            setCalcPriceNoVat(e.target.value);
+                            setCalcLastEdited('noVat');
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleCalculateVat('noVat');
+                            }
+                          }}
+                          placeholder="0,00"
+                          className="w-full p-1.5 text-right font-mono font-bold text-xs border border-gray-400 rounded bg-white focus:outline-none focus:border-[#70419a]"
+                        />
+                      </div>
+                      <span className="col-span-1 text-xs font-bold text-gray-600">€</span>
                     </div>
-                    <div className="py-2.5 flex items-center justify-between">
-                      <span className="text-[#83768a]">Productos agotados</span>
-                      <strong className="text-[#c34b63] text-sm">{data.products.filter(p => p.stock === 0).length}</strong>
+
+                    <div className="grid grid-cols-12 items-center gap-2">
+                      <label className="col-span-5 text-xs font-bold text-gray-800">Precio con IVA:</label>
+                      <div className="col-span-6">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={calcPriceWithVat}
+                          onChange={e => {
+                            setCalcPriceWithVat(e.target.value);
+                            setCalcLastEdited('withVat');
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleCalculateVat('withVat');
+                            }
+                          }}
+                          placeholder="0,00"
+                          className="w-full p-1.5 text-right font-mono font-bold text-xs border border-gray-400 rounded bg-white focus:outline-none focus:border-[#70419a] text-[#70419a]"
+                        />
+                      </div>
+                      <span className="col-span-1 text-xs font-bold text-gray-600">€</span>
+                    </div>
+
+                    <div className="grid grid-cols-12 items-center gap-2">
+                      <label className="col-span-5 text-xs font-bold text-gray-800">Importe del IVA:</label>
+                      <div className="col-span-6">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={calcVatAmount}
+                          onChange={e => {
+                            setCalcVatAmount(e.target.value);
+                            setCalcLastEdited('vatAmount');
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleCalculateVat('vatAmount');
+                            }
+                          }}
+                          placeholder="0,00"
+                          className="w-full p-1.5 text-right font-mono font-medium text-xs border border-gray-400 rounded bg-white focus:outline-none focus:border-[#70419a]"
+                        />
+                      </div>
+                      <span className="col-span-1 text-xs font-bold text-gray-600">€</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="info-purple mt-4">
-                  Sugerencia: crea una variante distinta para “Blusa negra · S” y “Blusa negra · M”. Así cada talla tendrá su propio stock, precio y coste.
+                {/* Acciones de la calculadora */}
+                <div className="pt-3 border-t border-[#eadff0] mt-3">
+                  <button
+                    type="button"
+                    onClick={handleClearCalc}
+                    className="w-full py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 font-bold text-xs cursor-pointer transition-colors shadow-xs"
+                  >
+                    Limpiar
+                  </button>
                 </div>
               </div>
             </div>
@@ -1391,15 +1601,29 @@ export default function App() {
             <div className="card-boutique">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-[#eadff0]">
                 <h3 className="text-base font-bold text-[#48245f] m-0">Variantes registradas</h3>
-                <div className="relative w-full sm:w-72">
-                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={productSearch}
-                    onChange={e => setProductSearch(e.target.value)}
-                    placeholder="Buscar nombre, talla, color…"
-                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#eadff0] focus:border-[#70419a] outline-none text-xs bg-[#faf8fc]"
-                  />
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      generateInventoryPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Descargando informe de inventario en PDF boutique!');
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                    title="Descargar informe oficial de inventario en PDF estético"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-pink-200" />
+                    <span>Informe PDF</span>
+                  </button>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={productSearch}
+                      onChange={e => setProductSearch(e.target.value)}
+                      placeholder="Buscar código, nombre, talla, color…"
+                      className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#eadff0] focus:border-[#70419a] outline-none text-xs bg-[#faf8fc]"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1407,9 +1631,10 @@ export default function App() {
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-[#eadff0] bg-[#fbf9fd] text-[#83768a] uppercase text-[10px] font-bold">
+                      <th className="py-3 px-3">Código</th>
                       <th className="py-3 px-3">Producto / variante</th>
                       <th className="py-3 px-3">Categoría</th>
-                      <th className="py-3 px-3">Precio</th>
+                      <th className="py-3 px-3">Precio de Venta Final</th>
                       <th className="py-3 px-3">Coste/ud.</th>
                       <th className="py-3 px-3 text-center">Stock</th>
                       <th className="py-3 px-3">Estado</th>
@@ -1418,9 +1643,14 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-[#f0eaf4]">
                     {data.products
-                      .filter(p => [p.name, p.category, p.size, p.color, p.channel, p.rackLocation].join(' ').toLowerCase().includes(productSearch.toLowerCase()))
+                      .filter(p => [p.sku, p.code, p.id, p.name, p.category, p.size, p.color, p.channel, p.rackLocation].filter(Boolean).join(' ').toLowerCase().includes(productSearch.toLowerCase()))
                       .map(p => (
                         <tr key={p.id} className="hover:bg-[#f5effa]/30 transition-colors">
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className="font-mono font-bold text-xs bg-[#f5effa] text-[#70419a] px-2 py-1 rounded-md border border-[#eadff0] inline-block tracking-wider">
+                              {p.sku || p.id.slice(-6).toUpperCase()}
+                            </span>
+                          </td>
                           <td className="py-3 px-3">
                             <div className="font-bold text-[#48245f] text-sm sm:text-base">{productLabel(p)}</div>
                             <div className="text-[11px] text-[#83768a] flex items-center gap-2 mt-0.5">
@@ -1430,7 +1660,12 @@ export default function App() {
                           </td>
                           <td className="py-3 px-3 text-[#83768a]">{p.category}</td>
                           <td className="py-3 px-3 font-extrabold text-[#48245f]">{money(p.price)}</td>
-                          <td className="py-3 px-3 text-[#83768a]">{money(p.unitCost || 0)}</td>
+                          <td className="py-3 px-3">
+                            <div className="text-[#83768a] font-medium">{money(p.unitCost || 0)}</div>
+                            <div className="text-[11px] text-[#64546e] font-semibold">
+                              ({money((p.unitCost || 0) * 1.262)})
+                            </div>
+                          </td>
                           <td className="py-3 px-3 text-center">
                             <div className="inline-flex items-center gap-1">
                               <span className={`px-2 py-0.5 rounded-md font-extrabold text-sm ${
@@ -1492,6 +1727,44 @@ export default function App() {
                       ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* Resumen del inventario (Movido a la parte posterior) */}
+            <div className="card-boutique">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 border-b border-[#eadff0] gap-2 mb-4">
+                <div>
+                  <h3 className="text-base font-bold text-[#48245f] m-0">Resumen del inventario</h3>
+                  <p className="text-xs text-[#83768a] m-0">Balance de existencias, productos agotados y valoración a precio de venta final.</p>
+                </div>
+                <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-[#f5effa] text-[#70419a]">
+                  {data.products.length} variantes registradas
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="p-3.5 rounded-xl bg-[#faf8fc] border border-[#eadff0]">
+                  <div className="text-[11px] font-semibold text-[#83768a]">Variantes registradas</div>
+                  <div className="text-xl font-black text-[#48245f] mt-1">{data.products.length}</div>
+                </div>
+                <div className="p-3.5 rounded-xl bg-[#faf8fc] border border-[#eadff0]">
+                  <div className="text-[11px] font-semibold text-[#83768a]">Unidades disponibles</div>
+                  <div className="text-xl font-black text-[#48245f] mt-1">{allUnits}</div>
+                </div>
+                <div className="p-3.5 rounded-xl bg-[#faf8fc] border border-[#eadff0]">
+                  <div className="text-[11px] font-semibold text-[#83768a]">Valor a Precio de Venta Final</div>
+                  <div className="text-xl font-black text-[#70419a] mt-1">{money(stockTotalValue)}</div>
+                </div>
+                <div className="p-3.5 rounded-xl bg-[#faf8fc] border border-[#eadff0]">
+                  <div className="text-[11px] font-semibold text-[#83768a]">Productos agotados</div>
+                  <div className="text-xl font-black text-[#c34b63] mt-1">
+                    {data.products.filter(p => p.stock === 0).length}
+                  </div>
+                </div>
+              </div>
+
+              <div className="info-purple mt-4">
+                💡 <strong>Sugerencia:</strong> crea una variante distinta para “Blusa negra · S” y “Blusa negra · M”. Así cada talla tendrá su propio stock, precio de venta final y coste.
               </div>
             </div>
           </section>
@@ -1691,15 +1964,29 @@ export default function App() {
             <div className="card-boutique">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-[#eadff0]">
                 <h3 className="text-base font-bold text-[#48245f] m-0">Historial de ventas</h3>
-                <div className="relative w-full sm:w-72">
-                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={salesSearch}
-                    onChange={e => setSalesSearch(e.target.value)}
-                    placeholder="Buscar fecha, producto o pago…"
-                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#eadff0] outline-none text-xs bg-[#faf8fc]"
-                  />
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      generateSalesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Descargando informe de ventas en PDF boutique!');
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                    title="Descargar informe oficial de ventas en PDF estético"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-pink-200" />
+                    <span>Informe PDF</span>
+                  </button>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={salesSearch}
+                      onChange={e => setSalesSearch(e.target.value)}
+                      placeholder="Buscar fecha, producto o pago…"
+                      className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#eadff0] outline-none text-xs bg-[#faf8fc]"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1755,9 +2042,37 @@ export default function App() {
         {/* ================= PAGE 4: FINANZAS ================= */}
         {currentPage === 'finanzas' && (
           <section className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-extrabold text-[#48245f] m-0">Finanzas, compras y gastos</h2>
-              <p className="text-xs text-[#83768a] mt-1">Reúne facturas de proveedores, gastos y estimaciones para revisar tu negocio.</p>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-extrabold text-[#48245f] m-0">Finanzas, compras y gastos</h2>
+                <p className="text-xs text-[#83768a] mt-1">Reúne facturas de proveedores, gastos y estimaciones para revisar tu negocio.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    generatePurchasesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                    showToast('¡Descargando informe de compras y facturas en PDF!');
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                  title="Descargar informe oficial de compras a proveedores en PDF"
+                >
+                  <FileText className="w-3.5 h-3.5 text-pink-200" />
+                  <span>Informe Compras PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    generateExpensesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                    showToast('¡Descargando informe de gastos operativos en PDF!');
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                  title="Descargar informe oficial de gastos en PDF"
+                >
+                  <FileText className="w-3.5 h-3.5 text-pink-200" />
+                  <span>Informe Gastos PDF</span>
+                </button>
+              </div>
             </div>
 
             <div className="alert-amber">
@@ -2172,15 +2487,29 @@ export default function App() {
                 <h2 className="text-2xl font-extrabold text-[#48245f] m-0">Fiscalidad y calendario</h2>
                 <p className="text-xs text-[#83768a] mt-1">Una lista de preparación para que puedas presentar tus obligaciones con orden.</p>
               </div>
-              <a
-                href="https://sede.agenciatributaria.gob.es/Sede/calendario-contribuyente.html"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3.5 py-2 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] text-xs font-bold flex items-center gap-1.5 transition-colors"
-              >
-                <span>Consultar calendario oficial</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    generateTasksAndNotesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                    showToast('¡Descargando informe fiscal y recordatorios en PDF!');
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  title="Descargar informe oficial fiscal en PDF"
+                >
+                  <FileText className="w-3.5 h-3.5 text-pink-200" />
+                  <span>Informe Fiscal PDF</span>
+                </button>
+                <a
+                  href="https://sede.agenciatributaria.gob.es/Sede/calendario-contribuyente.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-2 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] text-xs font-bold flex items-center gap-1.5 transition-colors"
+                >
+                  <span>Calendario oficial</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
             </div>
 
             <div className="alert-amber">
@@ -2568,42 +2897,96 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Export CSVs */}
+              {/* Export PDFs */}
               <div className="card-boutique">
-                <h3 className="text-base font-bold text-[#48245f] mb-2">Exportar tablas para hojas de cálculo</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-bold text-[#48245f] m-0">Informes Oficiales en PDF (Diseño Boutique)</h3>
+                  <span className="text-[10px] bg-[#f5effa] text-[#70419a] px-2.5 py-1 rounded-full font-bold border border-[#eadff0]">
+                    A4 Imprimible & Descargable
+                  </span>
+                </div>
                 <p className="text-xs text-[#83768a] leading-relaxed mb-4">
-                  <strong>¿Qué es CSV?</strong> Es un archivo de texto que organiza los datos en filas y columnas para Excel o Google Sheets. En esta aplicación se exporta con punto y coma para adaptarse mejor a la configuración habitual en español.
+                  Genera y descarga informes ejecutivos oficiales con la identidad de <strong>Miranda’s Closets+ · Sevilla</strong>, métricas clave (KPIs), tablas completas, formateo de importes y numeración de páginas para gestoría, socios o archivo.
                 </p>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2.5">
                   <button
-                    onClick={() => exportCSV('inventory', data)}
-                    className="py-2 px-3 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-xs text-left cursor-pointer transition-colors"
+                    onClick={() => {
+                      generateInventoryPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Informe de inventario en PDF generado con éxito!');
+                    }}
+                    className="py-2.5 px-3.5 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs text-left cursor-pointer transition-all flex items-center justify-between shadow-xs group"
                   >
-                    Exportar inventario (.csv)
+                    <div className="flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-pink-200" />
+                      <span>Informe de inventario y stock en PDF</span>
+                    </div>
+                    <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold group-hover:bg-white/30">
+                      Inventario PDF
+                    </span>
                   </button>
+
                   <button
-                    onClick={() => exportCSV('sales', data)}
-                    className="py-2 px-3 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-xs text-left cursor-pointer transition-colors"
+                    onClick={() => {
+                      generateSalesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Informe de ventas y pedidos en PDF generado con éxito!');
+                    }}
+                    className="py-2.5 px-3.5 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs text-left cursor-pointer transition-all flex items-center justify-between shadow-xs group"
                   >
-                    Exportar ventas (.csv)
+                    <div className="flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-pink-200" />
+                      <span>Informe de ventas, pedidos y cobros en PDF</span>
+                    </div>
+                    <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold group-hover:bg-white/30">
+                      Ventas PDF
+                    </span>
                   </button>
+
                   <button
-                    onClick={() => exportCSV('purchases', data)}
-                    className="py-2 px-3 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-xs text-left cursor-pointer transition-colors"
+                    onClick={() => {
+                      generatePurchasesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Informe de compras y facturas en PDF generado con éxito!');
+                    }}
+                    className="py-2.5 px-3.5 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs text-left cursor-pointer transition-all flex items-center justify-between shadow-xs group"
                   >
-                    Exportar compras y facturas (.csv)
+                    <div className="flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-pink-200" />
+                      <span>Informe de compras y facturas con recargo en PDF</span>
+                    </div>
+                    <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold group-hover:bg-white/30">
+                      Compras PDF
+                    </span>
                   </button>
+
                   <button
-                    onClick={() => exportCSV('expenses', data)}
-                    className="py-2 px-3 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-xs text-left cursor-pointer transition-colors"
+                    onClick={() => {
+                      generateExpensesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Informe de gastos operativos en PDF generado con éxito!');
+                    }}
+                    className="py-2.5 px-3.5 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs text-left cursor-pointer transition-all flex items-center justify-between shadow-xs group"
                   >
-                    Exportar gastos (.csv)
+                    <div className="flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-pink-200" />
+                      <span>Informe de gastos operativos y envíos en PDF</span>
+                    </div>
+                    <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold group-hover:bg-white/30">
+                      Gastos PDF
+                    </span>
                   </button>
+
                   <button
-                    onClick={() => exportCSV('tasks', data)}
-                    className="py-2 px-3 rounded-xl bg-[#f5effa] hover:bg-[#eadff0] text-[#70419a] font-bold text-xs text-left cursor-pointer transition-colors"
+                    onClick={() => {
+                      generateTasksAndNotesPDF(data, currentUser?.displayName || currentUser?.email || 'Alex');
+                      showToast('¡Informe fiscal y recordatorios en PDF generado con éxito!');
+                    }}
+                    className="py-2.5 px-3.5 rounded-xl bg-[#70419a] hover:bg-[#48245f] text-white font-bold text-xs text-left cursor-pointer transition-all flex items-center justify-between shadow-xs group"
                   >
-                    Exportar tareas y recordatorios (.csv)
+                    <div className="flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-pink-200" />
+                      <span>Informe de obligaciones fiscales y recordatorios en PDF</span>
+                    </div>
+                    <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold group-hover:bg-white/30">
+                      Fiscal PDF
+                    </span>
                   </button>
                 </div>
               </div>

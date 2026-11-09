@@ -108,8 +108,13 @@ export function normalizeData(d: any): AppData {
     let unitCost = typeof p.unitCost === 'number' ? p.unitCost : (typeof p.cost === 'number' ? p.cost : parseFloat(String(p.cost || p.unitCost || 0).replace('€', '').replace(',', '.')));
     if (isNaN(unitCost)) unitCost = 0;
 
+    const id = String(p.id || uid('p') + idx);
+    const sku = String(p.sku || p.code || p.codigo || '').trim() || id.slice(-6).toUpperCase();
+
     return {
-      id: String(p.id || uid('p') + idx),
+      id,
+      sku,
+      code: sku,
       name: String(p.name || p.prenda || 'Prenda').trim(),
       category: p.category || p.categoria || 'Ropa',
       size: p.size || p.talla || '',
@@ -212,17 +217,43 @@ export function loadData(): AppData {
   return initialData();
 }
 
+export const KEY_AUTO_BACKUP = 'mirandas_user_custom_backup';
+
+export function isDemoData(products: Product[]): boolean {
+  if (products.length !== 3) return false;
+  const demoNames = ['Conjunto Punto Otoño', 'Vestido Midi Invitada', 'Bolso Shopper Casual'];
+  return products.every(p => demoNames.includes(p.name));
+}
+
 export function saveData(data: AppData): boolean {
   try {
     localStorage.setItem(KEY_V2, JSON.stringify(data));
     // Also save in legacy keys for seamless backwards-compatibility
     localStorage.setItem(KEY_LEGACY_PRO, JSON.stringify(data.products));
     localStorage.setItem(KEY_LEGACY, JSON.stringify(data.products));
+
+    // Save auto-backup whenever custom user products or transactions exist
+    if (data.products && data.products.length > 0 && !isDemoData(data.products)) {
+      localStorage.setItem(KEY_AUTO_BACKUP, JSON.stringify(data));
+    }
     return true;
   } catch (err) {
     console.error('Error saving data to storage:', err);
     return false;
   }
+}
+
+export function getAutoBackup(): AppData | null {
+  try {
+    const raw = localStorage.getItem(KEY_AUTO_BACKUP);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed) return normalizeData(parsed);
+    }
+  } catch (e) {
+    console.error('Error reading auto backup:', e);
+  }
+  return null;
 }
 
 export function productLabel(p: Product): string {
