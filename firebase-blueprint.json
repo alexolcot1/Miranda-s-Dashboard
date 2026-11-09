@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "StoreData": {
+      "title": "StoreData",
+      "description": "Store inventory, sales, purchases, expenses, and notes for Miranda's Closet Plus",
+      "type": "object",
+      "properties": {
+        "storeName": {
+          "type": "string",
+          "description": "Name of the store"
+        },
+        "products": {
+          "type": "array",
+          "description": "List of store products and stock"
+        },
+        "sales": {
+          "type": "array",
+          "description": "List of recorded sales"
+        },
+        "purchases": {
+          "type": "array",
+          "description": "List of purchase invoices"
+        },
+        "expenses": {
+          "type": "array",
+          "description": "List of recorded expenses"
+        },
+        "notes": {
+          "type": "array",
+          "description": "Reminders and tasks"
+        },
+        "fiscalTasks": {
+          "type": "array",
+          "description": "Fiscal calendar tasks"
+        },
+        "rentaChecks": {
+          "type": "array",
+          "description": "Checklist index array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last updated timestamp"
+        },
+        "lastUpdatedBy": {
+          "type": "string",
+          "description": "Email or user ID of last editor"
+        }
+      },
+      "required": ["updatedAt"]
+    }
+  },
+  "firestore": {
+    "/stores/{storeId}/data/{docId}": {
+      "schema": {
+        "$ref": "#/entities/StoreData"
+      },
+      "description": "Shared real-time boutique data for Miranda's Closet Plus team and collaborators"
+    },
+    "/users/{userId}/store/{storeId}": {
+      "schema": {
+        "$ref": "#/entities/StoreData"
+      },
+      "description": "Private user store data"
+    }
+  }
+}

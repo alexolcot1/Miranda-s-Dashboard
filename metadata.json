@@ -1,0 +1,6 @@
+{
+  "name": "MIRANDA’S Closets+ · Gestión privada",
+  "description": "MIRANDA’S Closets+ · Panel integral de gestión de tienda de moda: inventario multicanal, ventas, compras de mercancía, gastos, fiscalidad con recargo de equivalencia, recordatorios y modo TikTok Live.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
